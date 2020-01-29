@@ -10,15 +10,10 @@ if [[ ! -d "pex" ]]; then
 fi
 
 # a directory to hold test run data
-TEMP=
+TEMP="$(pwd)/t/$(date -u '+%Y%m%d%H%M%S')"
 
-setup_test_dir() {
-  local ts
-  ts=$(date -u '+%Y%m%d%H%M%S')
-  TEMP="t/${ts}"
-  mkdir -p "$TEMP"
-}
-setup_test_dir
+mkdir -p "$TEMP"
+export TEMP
 
 cat >&2 <<EOS
 ------------------------------------------
@@ -41,7 +36,6 @@ if [[ -f /etc/pexrc ]]; then
 fi
 
 cleanup() {
-  [[ -n "${TEMP:-}" ]] && rm -rf "${TEMP}"
   if [[ -n "${ORIG_ETC_PEXRC}" && -f "${ORIG_ETC_PEXRC}" ]]; then
     sudo mv "${ORIG_ETC_PEXRC}" /etc/pexrc
   fi
@@ -63,6 +57,10 @@ PYTHON="${PEX_TEST_PYTHON:-python}"
 
 log() {
   printf ':log: %s\n' $* >&2
+}
+
+pyrealpath() {
+  /usr/bin/python -c 'from __future__ import print_function; import os.path, sys; print("\n".join([os.path.realpath(p) for p in sys.argv[1:]]))' "$@"
 }
 
 with_etc_pexrc() {
@@ -102,18 +100,20 @@ reqs=torf       use requirements.txt or not (no-reqs)
 venv=torf       use venv or not
 pythonbin=py    which python to use
 pexrc=torf      /etc/pexrc or not
-quiet!          silence python output
+rpath=torf      use realpath of python binary
 "
 
 make_and_run() {
   (
     set -euo pipefail
-    local reqs venv python_bin
+
+    local reqs venv python_bin pexrc quiet rpath
     reqs=f
     venv=f
     python_bin="$PYTHON"
     pexrc=f
     quiet=f
+    rpath=f
 
     eval "$(echo "$OPTS_SPEC" | git rev-parse --parseopt -- "$@" || echo exit $?)"
 
@@ -125,15 +125,18 @@ make_and_run() {
         --venv) venv="$1"; shift ;;
         --pythonbin) python_bin="$1"; shift ;;
         --pexrc) pexrc="$1"; shift ;;
-        --quiet) quiet=t ;;
+        --rpath) rpath="$1"; shift ;;
+        --) break ;;
+        *) die "unrecognized option $opt" ;;
       esac
     done
 
-    log "reqs: ${reqs}, venv: ${venv}, python: ${python_bin}, /etc/pexrc: ${pexrc}"
+    log "reqs: ${reqs}, realpath: ${rpath}, python: ${python_bin}, /etc/pexrc: ${pexrc}"
 
     local t
     t="${TEMP}/${TEST_NUM}"
     mkdir -p "${t}"
+
     export PEX_ROOT="${t}/pexroot"
     mkdir -p "${PEX_ROOT}"
 
@@ -159,9 +162,14 @@ EOS
     fi
 
 
+    if [[ "${rpath}" == "t" ]]; then
+      python_bin="$(pyrealpath $(pyenv which "${python_bin}"))"
+    fi
+
     local args
     args=(
       "${python_bin}" -m pex
+      -v -v -v -v -v -v -v -v -v
       -o "${t}/out.pex"
       -m worked
       -D "${t}"
@@ -184,14 +192,11 @@ EOS
 
     log "exec: $(echo ${args[*]})"
 
-    (
-      if [[ "$quiet" == 't' ]]; then
-        exec &>/dev/null
-      fi
-      PYTHONPATH="$PEXDIR" "${args[@]}"
-    )
+    echo "PYTHONPATH=$PEXDIR ${args[@]}" > "${t}/command"
 
-     [[ -f "${t}/out.pex" ]] && "${t}/out.pex"
+    PYTHONPATH="$PEXDIR" "${args[@]}" >"${t}/pex.out" 2>"${t}/pex.err"
+
+    [[ -f "${t}/out.pex" ]] && "${t}/out.pex"
   )
 }
 
@@ -205,15 +210,20 @@ run() {
   bump_counter
 }
 
-maj_min_python="python$(echo "${PYENV_VERSION}" |sed -E -e 's/(.*)\.[0-9]/\1/')"
+main() {
+  local reqs pexrc rpath python
+  maj_min_python="python$(echo "${PYENV_VERSION}" |sed -E -e 's/(.*)\.[0-9]/\1/')"
 
-for reqs in f t; do
-  for pexrc in f t; do
-    for python in python python3 "$maj_min_python"; do
-      run --reqs=$reqs --venv=$venv --pythonbin=$python --pexrc=$pexrc --quiet
+  for reqs in f t; do
+    for pexrc in f t; do
+      for rpath in f t; do
+        for python in python python3 "$maj_min_python"; do
+          run --reqs="$reqs" --pythonbin="$python" --pexrc="$pexrc" --rpath="${rpath}"
+        done
+      done
     done
   done
-done
+}
 
-mv "${TEMP}" "test-run-$(date '+%Y%m%d%H%M%S')"
+main "$@"
 
