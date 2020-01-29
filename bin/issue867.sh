@@ -20,15 +20,18 @@ setup_test_dir() {
 }
 setup_test_dir
 
+cat >&2 <<EOS
+------------------------------------------
 
+Contents of /etc/pexrc
+$(cat /etc/pexrc)
 
-echo "------------------------------------------" >&2
-echo "Contents of /etc/pexrc" >&2
-cat /etc/pexrc >&2
-echo "/usr/bin/which python" >&2
-/usr/bin/which python
-echo "PATH" >&2
-echo "------------------------------------------" >&2
+/usr/bin/which python: $(/usr/bin/which python)
+
+PATH: $PATH
+
+------------------------------------------
+EOS
 
 
 ORIG_ETC_PEXRC=''
