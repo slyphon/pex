@@ -13,4 +13,4 @@
 /.pyenv_test
 .cache/*
 .eggs/*
-/.pytest_cache
+/.pytest_cachet/
